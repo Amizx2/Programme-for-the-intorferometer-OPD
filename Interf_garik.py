@@ -819,7 +819,8 @@ class AdvancedInterferometerApp(QMainWindow):
 
             if not np.issubdtype(self.data.iloc[:, 0].dtype, np.number):
                 raise ValueError("Non-numeric data detected")
-
+            # Перевод из dB (мощностных) в амплитуду: amp = 10^(dB/20)
+            self.data = self.data.apply(lambda col: 10 ** (col / 20))  # Преобразование dB в амплитуду
             self.update_interface()
             self.statusBar().showMessage(f"Loaded: {os.path.basename(file_path)}")
 
