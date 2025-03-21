@@ -2,14 +2,12 @@ import sys
 import os
 import numpy as np
 import pandas as pd
-from PyQt5.QtGui import QCursor
-from PyQt5.QtWidgets import QGraphicsOpacityEffect
-from PyQt5.QtCore import QPropertyAnimation
+from PyQt5.QtGui import QCursor, QFont, QIcon
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
                              QPushButton, QLabel, QLineEdit, QFileDialog, QComboBox,
-                             QTabWidget, QGroupBox, QTableView, QStatusBar, QInputDialog, QDialog)
-from PyQt5.QtGui import QFont, QIcon
-from PyQt5.QtCore import Qt, pyqtSignal, QAbstractTableModel
+                             QTabWidget, QGroupBox, QTableView, QStatusBar, QInputDialog,
+                             QDialog, QTabBar, QGraphicsOpacityEffect, QAbstractItemView)
+from PyQt5.QtCore import Qt, pyqtSignal, QAbstractTableModel, QPropertyAnimation, QAbstractItemModel
 import pyqtgraph as pg
 from scipy.signal import hilbert, find_peaks
 from scipy.fft import fft, fftfreq
@@ -640,6 +638,16 @@ class MainWidget(QWidget):
         self.update_spectrum()
 
 # ----- Главное окно приложения -----
+class CustomTabWidget(QTabWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setTabsClosable(True)
+        self.setMovable(False)
+
+    def tabInserted(self, index):
+        super().tabInserted(index)
+        if self.tabText(index) == "Main":
+            self.tabBar().setTabButton(index, QTabBar.RightSide, None)
 class AdvancedInterferometerApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -676,12 +684,11 @@ class AdvancedInterferometerApp(QMainWindow):
         self.left_layout = QVBoxLayout(self.left_panel)
         self.main_layout.addWidget(self.left_panel)
 
-        self.tab_widget = QTabWidget()
+        self.tab_widget = CustomTabWidget()
         self.tab_widget.setTabPosition(QTabWidget.West)
-
-        self.tab_widget.setAcceptDrops(False)
         self.tab_widget.tabCloseRequested.connect(self.closeTab)
         self.main_layout.addWidget(self.tab_widget)
+
 
         self.peaks_visible = False
         self.data = None
@@ -692,6 +699,7 @@ class AdvancedInterferometerApp(QMainWindow):
         self.main_widget = MainWidget(np.array([]), 1000.0)
         self.tab_widget.addTab(self.main_widget, "Main")
 
+
         # Создаём оверлей для Drag & Drop (предполагается, что класс DragOverlay уже есть)
         self.drag_overlay = DragOverlay(self.central_widget)
         self.drag_overlay.raise_()
@@ -701,6 +709,12 @@ class AdvancedInterferometerApp(QMainWindow):
         ###################################################################
         # Метод resizeEvent: оверлей растягивается на всё окно
         ###################################################################
+
+
+    def closeTab(self, index):
+        # Проверяем, не является ли вкладка "Main", если это так, то не закрываем её
+        if self.tab_widget.tabText(index) != "Main":
+            self.tab_widget.removeTab(index)
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.drag_overlay.setGeometry(self.central_widget.rect())
@@ -858,6 +872,7 @@ class AdvancedInterferometerApp(QMainWindow):
 
         # Обновляем Main виджет
         signal = self.data.iloc[:, self.current_channel].values
+
         self.main_widget.update_signal(signal, 1000.0)
 
     def update_channel(self, index):
@@ -922,6 +937,8 @@ class AdvancedInterferometerApp(QMainWindow):
     def open_Main_widget(self):
         self.tab_widget.setCurrentWidget(self.main_widget)
 
+
+
     def switchToExistingTab(self, title):
         for i in range(self.tab_widget.count()):
             if self.tab_widget.tabText(i) == title:
@@ -929,8 +946,7 @@ class AdvancedInterferometerApp(QMainWindow):
                 return True
         return False
 
-    def closeTab(self, index):
-        self.tab_widget.removeTab(index)
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setFont(QFont("Helvetica", 10))
