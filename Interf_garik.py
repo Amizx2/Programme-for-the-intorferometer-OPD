@@ -712,9 +712,7 @@ class AdvancedInterferometerApp(QMainWindow):
 
 
     def closeTab(self, index):
-        # Проверяем, не является ли вкладка "Main", если это так, то не закрываем её
-        if self.tab_widget.tabText(index) != "Main":
-            self.tab_widget.removeTab(index)
+        self.tab_widget.removeTab(index)
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.drag_overlay.setGeometry(self.central_widget.rect())
