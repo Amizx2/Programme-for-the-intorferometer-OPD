@@ -638,3 +638,4 @@ if __name__ == "__main__":
     window = AdvancedInterferometerApp()
     window.show()
     sys.exit(app.exec_())
+d
