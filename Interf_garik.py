@@ -505,7 +505,7 @@ class MainWidget(QWidget):
         main_tb_layout.addWidget(self.btn_export_plots)
         layout.addWidget(self.main_toolbar)
 
-        self.btn_zoom.clicked.connect(lambda: self.plot_spectrum.getViewBox().setMouseMode(3))
+        self.btn_zoom.clicked.connect(self.reset_zoom)
         self.btn_pan.clicked.connect(lambda: self.plot_spectrum.getViewBox().setMouseMode(1))
         self.btn_export_plots.clicked.connect(self.export_all_plots)
 
@@ -880,13 +880,28 @@ class AdvancedInterferometerApp(QMainWindow):
             self.main_widget.update_signal(signal, 1000.0)
 
     def apply_filter(self):
+        if self.data is None:
+            self.statusBar().showMessage("No data to filter")
+            return
         try:
             window = int(self.filter_param.text())
             raw = self.data.iloc[:, self.current_channel].values
+
             if self.filter_type.currentText() == 'Moving Average':
                 kernel = np.ones(window) / window
                 self.processed_data = np.convolve(raw, kernel, mode='same')
+            elif self.filter_type.currentText() == 'Gaussian':
+                from scipy.ndimage import gaussian_filter1d
+                self.processed_data = gaussian_filter1d(raw, window)
+            elif self.filter_type.currentText() == 'Savitzky-Golay':
+                from scipy.signal import savgol_filter
+                self.processed_data = savgol_filter(raw, window, 3)
+
             self.statusBar().showMessage("Filter applied successfully")
+
+            # Обновление всех графиков после применения фильтра
+            self.main_widget.update_signal(self.processed_data, 1000.0)
+
         except Exception as e:
             self.statusBar().showMessage(f"Filter Error: {str(e)}")
 
@@ -935,6 +950,12 @@ class AdvancedInterferometerApp(QMainWindow):
     def open_Main_widget(self):
         self.tab_widget.setCurrentWidget(self.main_widget)
 
+    def reset_zoom(self):
+        # Сброс масштаба графиков на исходный
+        self.plot_original.getViewBox().resetTransform()
+        self.plot_spectrum.getViewBox().resetTransform()
+        self.plot_phase.getViewBox().resetTransform()
+        self.btn_zoom.clicked.connect(self.reset_zoom)
 
 
     def switchToExistingTab(self, title):
