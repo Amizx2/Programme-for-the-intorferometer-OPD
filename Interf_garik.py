@@ -2,15 +2,111 @@ import sys
 import os
 import numpy as np
 import pandas as pd
+from PyQt5.QtCore import Qt, QAbstractTableModel
+from PyQt5.QtGui import QStandardItemModel, QStandardItem
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+    QTableView, QHeaderView, QFileDialog, QDialog
+)
+import numpy as np
+import pyqtgraph as pg
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QStandardItemModel, QStandardItem
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+                            QTableView, QFileDialog, QDialog, QDialogButtonBox,
+                            QLabel, QComboBox)
 from PyQt5.QtGui import QCursor, QFont, QIcon
+from PyQt5.QtGui import QStandardItemModel, QStandardItem
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
                              QPushButton, QLabel, QLineEdit, QFileDialog, QComboBox,
                              QTabWidget, QGroupBox, QTableView, QStatusBar, QInputDialog,
                              QDialog, QTabBar, QGraphicsOpacityEffect, QAbstractItemView)
-from PyQt5.QtCore import Qt, pyqtSignal, QAbstractTableModel, QPropertyAnimation, QAbstractItemModel
+from PyQt5.QtCore import (Qt, pyqtSignal, QAbstractTableModel, QPropertyAnimation, QAbstractItemModel, QEasingCurve)
 import pyqtgraph as pg
 from scipy.signal import hilbert, find_peaks
 from scipy.fft import fft, fftfreq
+from PyQt5.QtWidgets import QProgressBar
+from PyQt5.QtCore import QEasingCurve, QTimer
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget,
+                            QGraphicsDropShadowEffect, QDialog, QProgressBar)
+from PyQt5.QtCore import QRect
+from PyQt5.QtGui import QColor
+
+# Добавляем новый класс для загрузочного окна
+class LoadingWindow(QDialog):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Loading...")
+        self.setFixedSize(400, 150)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+        # Основной контейнер
+        self.container = QWidget(self)
+        self.container.setGeometry(0, 0, 400, 150)
+        self.container.setStyleSheet("""
+            background: qlineargradient(
+                x1:0, y1:0, x2:1, y2:0,
+                stop:0 #2c3e50, stop:1 #3498db
+            );
+            border-radius: 15px;
+            border: 1px solid rgba(255, 255, 255, 30);
+        """)
+
+        # Эффект тени
+        shadow = QGraphicsDropShadowEffect(self.container)
+        shadow.setBlurRadius(20)
+        shadow.setColor(QColor(0, 0, 0, 100))
+        shadow.setOffset(3, 3)
+        self.container.setGraphicsEffect(shadow)
+
+        layout = QVBoxLayout(self.container)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(20)
+
+        # Текст загрузки
+        self.loading_text = QLabel("Пошел ты нахуй")
+        self.loading_text.setAlignment(Qt.AlignCenter)
+        self.loading_text.setStyleSheet("""
+            color: rgba(255, 255, 255, 200);
+            font-size: 18px;
+            font-weight: 500;
+        """)
+
+        # Прогресс-бар
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setTextVisible(False)
+        self.progress.setStyleSheet("""
+            QProgressBar {
+                height: 8px;
+                background: rgba(255, 255, 255, 50);
+                border-radius: 4px;
+            }
+            QProgressBar::chunk {
+                background: rgba(255, 255, 255, 200);
+                border-radius: 4px;
+            }
+        """)
+
+        layout.addWidget(self.loading_text)
+        layout.addWidget(self.progress)
+
+        # Анимация прогресса
+        self.progress_anim = QPropertyAnimation(self.progress, b"value")
+        self.progress_anim.setDuration(2000)
+        self.progress_anim.setStartValue(0)
+        self.progress_anim.setEndValue(100)
+        self.progress_anim.setEasingCurve(QEasingCurve.OutQuad)
+
+    def showEvent(self, event):
+        self.progress_anim.start()
+        super().showEvent(event)
+
+    def closeEvent(self, event):
+        self.progress_anim.stop()
+        super().closeEvent(event)
+
 class DragOverlay(QWidget):
     """Полупрозрачный оверлей на весь экран с пунктирной границей и надписью по центру."""
     def __init__(self, parent=None):
@@ -296,73 +392,311 @@ class OriginalSignalWidget(QWidget):
                 exporter.export(file_name)
 
 # ----- Виджет SpectrumWidget -----
+# ----- Виджет SpectrumWidget с маркером -----
 class SpectrumWidget(QWidget):
     def __init__(self, mained_signal, sampling_rate, zero_padding=0, parent=None):
         super().__init__(parent)
         self.mained_signal = mained_signal
         self.sampling_rate = sampling_rate
         self.zero_padding = zero_padding
-        self.init_ui()
 
-    def init_ui(self):
-        layout = QVBoxLayout(self)
+        self.crosshair_enabled = False
+        self.xf = None
+        self.amplitude = None
+
         self.plot = pg.PlotWidget()
+        self.vline = None
+        self.hline = None
+        self.marker_text = None
+        self.curve = None
+        self.data_table = self._create_small_table()
+
+        self._init_ui()
+
+    def _init_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(5, 5, 5, 5)
+
+        # График
         self.plot.setBackground("#2E2E2E")
         self.plot.setLabel('left', 'Amplitude', color='white')
         self.plot.setLabel('bottom', 'Frequency (Hz)', color='white')
         self.plot.showGrid(x=True, y=True)
+        main_layout.addWidget(self.plot)
 
-        padded_signal = np.pad(self.mained_signal, (0, self.zero_padding), 'constant')
-        N = len(padded_signal)
-        T = 1.0 / self.sampling_rate
-        yf = fft(padded_signal)
-        xf = fftfreq(N, T)[:N // 2]
-        amplitude = 2.0 / N * np.abs(yf[:N // 2])
-        if len(xf) > 1:
-            xf = xf[1:]
-            amplitude = amplitude[1:]
+        # Таблица данных
+        main_layout.addWidget(self.data_table)
 
-        self.plot.plot(xf, amplitude, pen=pg.mkPen('#00FFFF', width=2))
-        layout.addWidget(self.plot)
+        # Панель инструментов внизу
+        main_layout.addWidget(self._create_toolbar())
 
+        self._init_crosshair()
+        self._calculate_spectrum()
+        self._create_data_curve()
+        self._reset_crosshair_position()
+
+    def _create_small_table(self):
+        table = QTableView()
+        table.setMaximumHeight(60)
+        table.setFixedWidth(300)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.verticalHeader().hide()
+        table.setStyleSheet("""
+            QTableView {
+                background-color: #2E2E2E;
+                color: #FFFFFF;
+                border: none;
+                font-size: 12px;
+            }
+            QHeaderView::section {
+                background-color: #404040;
+                color: #FFFFFF;
+                padding: 2px;
+            }
+        """)
+        table.hide()
+        return table
+
+    def _create_toolbar(self):
         toolbar = QWidget()
-        toolbar_layout = QHBoxLayout(toolbar)
-        btn_zoom = QPushButton("Zoom")
-        btn_pan = QPushButton("Pan")
-        btn_export = QPushButton("Export Plot")
-        toolbar_layout.addWidget(btn_zoom)
-        toolbar_layout.addWidget(btn_pan)
-        toolbar_layout.addWidget(btn_export)
-        layout.addWidget(toolbar)
+        layout = QHBoxLayout(toolbar)
+        layout.setContentsMargins(0, 5, 0, 0)
 
-        btn_zoom.clicked.connect(lambda: self.plot.getViewBox().autoRange())
-        btn_pan.clicked.connect(lambda: self.plot.getViewBox().setMouseMode(pg.ViewBox.PanMode))
-        btn_export.clicked.connect(self.export_plot)
+        self.btn_zoom = QPushButton("Zoom")
+        self.btn_pan = QPushButton("Marker")
+        self.btn_export = QPushButton("Export")
 
-        self.setLayout(layout)
+        button_style = """
+            QPushButton {
+                background-color: #505050;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                min-width: 80px;
+            }
+            QPushButton:hover { background-color: #606060; }
+            QPushButton:checked { background-color: #707070; }
+        """
 
-    def export_plot(self):
+        for btn in [self.btn_zoom, self.btn_pan, self.btn_export]:
+            btn.setStyleSheet(button_style)
+
+        self.btn_pan.setCheckable(True)
+        self.btn_pan.setToolTip("Toggle measurement marker")
+
+        layout.addStretch(1)
+        layout.addWidget(self.btn_zoom)
+        layout.addWidget(self.btn_pan)
+        layout.addWidget(self.btn_export)
+        layout.addStretch(1)
+
+        self.btn_zoom.clicked.connect(self._reset_zoom)
+        self.btn_pan.clicked.connect(self._toggle_marker_mode)
+        self.btn_export.clicked.connect(self._export_plot)
+
+        return toolbar
+
+    def _init_crosshair(self):
+        line_style = {'color': "#FFA500", 'width': 1, 'style': Qt.DashLine}
+
+        self.vline = pg.InfiniteLine(
+            angle=90,
+            movable=False,
+            pen=pg.mkPen(**line_style),
+            hoverPen=pg.mkPen(color="#FF0000", width=2),
+            bounds=(0, None)
+        )
+        self.vline.setVisible(False)
+
+        self.hline = pg.InfiniteLine(
+            angle=0,
+            movable=False,
+            pen=pg.mkPen(**line_style)
+        )
+        self.hline.setVisible(False)
+
+        self.marker_text = pg.TextItem(
+            anchor=(0.5, 0.5),
+            fill=(45, 45, 45, 200),
+            color='#FFFF00',
+            border=pg.mkPen(color='#808080', width=1)
+        )
+        self.marker_text.setVisible(False)
+        self.marker_text.mouseClickEvent = self._toggle_table
+
+        self.plot.addItem(self.vline)
+        self.plot.addItem(self.hline)
+        self.plot.addItem(self.marker_text)
+        self.vline.sigPositionChanged.connect(self._update_crosshair)
+
+    def _toggle_table(self, event):
+        self.data_table.setVisible(not self.data_table.isVisible())
+        if self.data_table.isVisible():
+            self._update_table_data()
+
+    def _update_table_data(self):
+        model = QStandardItemModel(1, 2)
+        model.setHorizontalHeaderLabels(['Frequency (Hz)', 'Amplitude'])
+
+        freq = self.vline.value()
+        idx = np.abs(self.xf - freq).argmin()
+        amp = self.amplitude[idx]
+
+        model.setItem(0, 0, QStandardItem(f"{freq:.4f}"))
+        model.setItem(0, 1, QStandardItem(f"{amp:.4f}"))
+
+        for col in range(2):
+            model.item(0, col).setTextAlignment(Qt.AlignCenter)
+
+        self.data_table.setModel(model)
+        self.data_table.resizeColumnsToContents()
+
+    def _calculate_spectrum(self):
+        try:
+            if len(self.mained_signal) == 0: return
+
+            padded_signal = np.pad(self.mained_signal, (0, self.zero_padding), 'constant')
+            N = len(padded_signal)
+            T = 1.0 / self.sampling_rate
+            yf = fft(padded_signal)
+            xf = fftfreq(N, T)[:N // 2]
+            amplitude = 2.0 / N * np.abs(yf[:N // 2])
+
+            self.xf = xf[1:] if len(xf) > 1 else None
+            self.amplitude = amplitude[1:] if len(amplitude) > 1 else None
+
+        except Exception as e:
+            print(f"Error calculating spectrum: {e}")
+            self.xf = None
+            self.amplitude = None
+
+    def _create_data_curve(self):
+        if self.curve: self.plot.removeItem(self.curve)
+        if self.xf is not None and self.amplitude is not None:
+            self.curve = self.plot.plot(self.xf, self.amplitude, pen=pg.mkPen('#00FFFF', width=2))
+
+    def _toggle_marker_mode(self):
+        self.crosshair_enabled = self.btn_pan.isChecked()
+        self._update_marker_controls()
+
+    def _update_marker_controls(self):
+        self.vline.setMovable(self.crosshair_enabled)
+        self.vline.setVisible(self.crosshair_enabled)
+        self.hline.setVisible(self.crosshair_enabled)
+        self.marker_text.setVisible(self.crosshair_enabled)
+        self.btn_pan.setText("Marker: On" if self.crosshair_enabled else "Marker: Off")
+        self.plot.setMouseEnabled(x=True, y=not self.crosshair_enabled)
+
+    def _update_crosshair(self):
+        if self.xf is None or self.amplitude is None: return
+
+        x_val = self.vline.value()
+        idx = np.abs(self.xf - x_val).argmin()
+        x_val = self.xf[idx]
+        y_val = self.amplitude[idx]
+
+        self.hline.setValue(y_val)
+        self._update_marker_text(x_val, y_val)
+
+    def _update_marker_text(self, x, y):
+        self.marker_text.setText(f"Freq: {x:.2f} Hz\nAmp: {y:.4f}", color='#FFFF00')
+        x_pos = x + (self.xf[-1] - self.xf[0]) * 0.02
+        y_pos = self.amplitude.max() * 0.95
+
+        if x_pos > self.xf[-1] * 0.98:
+            x_pos = x - (self.xf[-1] - self.xf[0]) * 0.1
+            self.marker_text.setAnchor((1, 0.5))
+        else:
+            self.marker_text.setAnchor((0, 0.5))
+
+        self.marker_text.setPos(x_pos, y_pos)
+        if self.data_table.isVisible():
+            self._update_table_data()
+
+    def _reset_crosshair_position(self):
+        if self.xf is not None and len(self.xf) > 0:
+            self.vline.setValue(self.xf[len(self.xf) // 2])
+            self._update_crosshair()
+
+    def _reset_zoom(self):
+        self.plot.autoRange()
+
+    def _export_plot(self):
         dialog = ExportTypeDialog(self)
         if dialog.exec_() == QDialog.Accepted:
             export_type = dialog.combo.currentText()
-            if export_type == "Raster (PNG)":
-                file_name, _ = QFileDialog.getSaveFileName(self, "Save Plot", "",
-                                                           "PNG Images (*.png);;All Files (*)")
-                if not file_name:
-                    return
-                import pyqtgraph.exporters as exporters
-                exporter = exporters.ImageExporter(self.plot.plotItem)
-                exporter.parameters()['width'] = 1920
-                exporter.export(file_name)
-            elif export_type == "Vector (SVG)":
-                file_name, _ = QFileDialog.getSaveFileName(self, "Save Plot as SVG", "",
-                                                           "SVG Files (*.svg);;All Files (*)")
-                if not file_name:
-                    return
-                import pyqtgraph.exporters as exporters
-                exporter = exporters.SVGExporter(self.plot.plotItem)
+            file_filter = "PNG (*.png)" if export_type == "Raster (PNG)" else "SVG (*.svg)"
+            file_name, _ = QFileDialog.getSaveFileName(self, "Save Plot", "", file_filter)
+
+            if file_name:
+                if export_type == "Raster (PNG)":
+                    exporter = pg.exporters.ImageExporter(self.plot.plotItem)
+                    exporter.parameters()['width'] = 1920
+                else:
+                    exporter = pg.exporters.SVGExporter(self.plot.plotItem)
                 exporter.export(file_name)
 
+    def update_spectrum(self, new_signal, new_sr):
+        self.mained_signal = new_signal
+        self.sampling_rate = new_sr
+        self._calculate_spectrum()
+        self._create_data_curve()
+        self._reset_crosshair_position()
+
+    def clear(self):
+        self.plot.clear()
+        self.xf = None
+        self.amplitude = None
+        self.curve = None
+        self.vline.hide()
+        self.hline.hide()
+        self.marker_text.hide()
+        self.data_table.hide()
+
+
+class ExportTypeDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Export Type")
+        layout = QVBoxLayout(self)
+
+        self.combo = QComboBox()
+        self.combo.addItems(["Raster (PNG)", "Vector (SVG)"])
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+
+        layout.addWidget(QLabel("Select export format:"))
+        layout.addWidget(self.combo)
+        layout.addWidget(btn_box)
+class PandasModel(QAbstractTableModel):
+    """Модель данных для отображения DataFrame"""
+
+    def __init__(self, data):
+        super().__init__()
+        self._data = data
+
+    def rowCount(self, parent=None):
+        return self._data.shape[0]
+
+    def columnCount(self, parent=None):
+        return self._data.shape[1]
+
+    def data(self, index, role=Qt.DisplayRole):
+        if role == Qt.DisplayRole:
+            value = self._data.iloc[index.row(), index.column()]
+            return f"{value:.4f}"
+        elif role == Qt.TextAlignmentRole:
+            return Qt.AlignCenter
+        return None
+
+    def headerData(self, section, orientation, role):
+        if role == Qt.DisplayRole:
+            if orientation == Qt.Horizontal:
+                return self._data.columns[section]
+            return str(section + 1)
+        return None
 # ----- Виджет PhaseWidget -----
 class PhaseWidget(QWidget):
     def __init__(self, time, phase, parent=None):
@@ -899,7 +1233,6 @@ class AdvancedInterferometerApp(QMainWindow):
 
             self.statusBar().showMessage("Filter applied successfully")
 
-            # Обновление всех графиков после применения фильтра
             self.main_widget.update_signal(self.processed_data, 1000.0)
 
         except Exception as e:
@@ -951,7 +1284,6 @@ class AdvancedInterferometerApp(QMainWindow):
         self.tab_widget.setCurrentWidget(self.main_widget)
 
     def reset_zoom(self):
-        # Сброс масштаба графиков на исходный
         self.plot_original.getViewBox().resetTransform()
         self.plot_spectrum.getViewBox().resetTransform()
         self.plot_phase.getViewBox().resetTransform()
@@ -969,7 +1301,17 @@ class AdvancedInterferometerApp(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setFont(QFont("Helvetica", 10))
+
+    # Показываем окно загрузки
+    splash = LoadingWindow()
+    splash.show()
+
+    # Создаем главное окно в фоне
     window = AdvancedInterferometerApp()
-    window.show()
+
+    # Настраиваем таймеры для закрытия splash и показа основного окна
+    QTimer.singleShot(2500, splash.close)
+    QTimer.singleShot(2500, window.show)
+
     sys.exit(app.exec_())
 
