@@ -1,64 +1,16 @@
-import sys
 import os
+import sys
+
 import numpy as np
 import pandas as pd
-from PyQt5.QtCore import Qt, QAbstractTableModel
-from PyQt5.QtGui import QStandardItemModel, QStandardItem
-from PyQt5.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-    QTableView,
-    QHeaderView,
-    QFileDialog,
-    QDialog,
-)
-import numpy as np
 import pyqtgraph as pg
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QStandardItemModel, QStandardItem
-from PyQt5.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-    QTableView,
-    QFileDialog,
-    QDialog,
-    QDialogButtonBox,
-    QLabel,
-    QComboBox,
-)
+import pyqtgraph.exporters as exporters
+from PyQt5.QtCore import QEasingCurve, QTimer
+from PyQt5.QtCore import QPointF
+from PyQt5.QtCore import Qt, pyqtSignal, QAbstractTableModel, QPropertyAnimation
+from PyQt5.QtGui import QColor
 from PyQt5.QtGui import QCursor, QFont, QIcon
 from PyQt5.QtGui import QStandardItemModel, QStandardItem
-from PyQt5.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QVBoxLayout,
-    QHBoxLayout,
-    QWidget,
-    QPushButton,
-    QLabel,
-    QLineEdit,
-    QFileDialog,
-    QComboBox,
-    QTabWidget,
-    QGroupBox,
-    QTableView,
-    QStatusBar,
-    QInputDialog,
-    QDialog,
-    QTabBar,
-    QGraphicsOpacityEffect,
-    QAbstractItemView,
-)
-from PyQt5.QtCore import Qt, pyqtSignal, QAbstractTableModel, QPropertyAnimation, QAbstractItemModel, QEasingCurve
-import pyqtgraph as pg
-from scipy.signal import hilbert, find_peaks
-from scipy.fft import fft, fftfreq
-from PyQt5.QtWidgets import QProgressBar
-from PyQt5.QtCore import QEasingCurve, QTimer
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -68,8 +20,25 @@ from PyQt5.QtWidgets import (
     QDialog,
     QProgressBar,
 )
-from PyQt5.QtCore import QRect
-from PyQt5.QtGui import QColor
+from PyQt5.QtWidgets import (
+    QDialogButtonBox,
+)
+from PyQt5.QtWidgets import (
+    QHBoxLayout,
+    QPushButton,
+    QLabel,
+    QLineEdit,
+    QFileDialog,
+    QComboBox,
+    QTabWidget,
+    QGroupBox,
+    QTableView,
+    QInputDialog,
+    QTabBar,
+    QGraphicsOpacityEffect,
+)
+from scipy.fft import fft, fftfreq
+from scipy.signal import hilbert
 
 
 # Добавляем новый класс для загрузочного окна
@@ -107,7 +76,7 @@ class LoadingWindow(QDialog):
         layout.setSpacing(20)
 
         # Текст загрузки
-        self.loading_text = QLabel("Пошел ты нахуй")
+        self.loading_text = QLabel("Loading...")
         self.loading_text.setAlignment(Qt.AlignCenter)
         self.loading_text.setStyleSheet(
             """
@@ -140,7 +109,7 @@ class LoadingWindow(QDialog):
 
         # Анимация прогресса
         self.progress_anim = QPropertyAnimation(self.progress, b"value")
-        self.progress_anim.setDuration(2000)
+        self.progress_anim.setDuration(500)
         self.progress_anim.setStartValue(0)
         self.progress_anim.setEndValue(100)
         self.progress_anim.setEasingCurve(QEasingCurve.OutQuad)
@@ -259,35 +228,7 @@ class ClickableLabel(QLabel):
         self.clicked.emit()
         super().mousePressEvent(event)
 
-
-# ----- Диалог выбора типа экспорта -----
-class ExportTypeDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Select Export Type")
-        self.setStyleSheet(
-            """
-            QDialog { background-color: #2E2E2E; color: #FFFFFF; }
-            QLabel { color: #FFFFFF; }
-            QPushButton { background-color: #505050; color: #FFFFFF; padding: 5px; }
-            QComboBox { background-color: #353535; color: #FFFFFF; padding: 3px; }
-        """
-        )
-        layout = QVBoxLayout(self)
-        label = QLabel("Choose export format:")
-        layout.addWidget(label)
-        self.combo = QComboBox()
-        self.combo.addItems(["Raster (PNG)", "Vector (SVG)"])
-        layout.addWidget(self.combo)
-        btn_layout = QHBoxLayout()
-        self.ok_btn = QPushButton("OK")
-        self.cancel_btn = QPushButton("Cancel")
-        btn_layout.addWidget(self.ok_btn)
-        btn_layout.addWidget(self.cancel_btn)
-        layout.addLayout(btn_layout)
-        self.ok_btn.clicked.connect(self.accept)
-        self.cancel_btn.clicked.connect(self.reject)
-        self.setFixedWidth(self.sizeHint().width() + 80)
+    # ----- Диалог выбора типа экспорта -----
 
     # ----- Кнопка для загрузки файла с поддержкой drag-and-drop -----
 
@@ -326,16 +267,16 @@ class ExportTypeDialog(QDialog):
 
 
 # ----- Функция для стилизованного ввода числа (Sampling Frequency) -----
-def getStyledDouble(parent, title, label, min_val=0.1, max_val=100000.0):
+def getStyledDouble(parent, title, label, min_val=0.001, max_val=10000):
     dialog = QInputDialog(parent)
     dialog.setWindowTitle(title)
     dialog.setLabelText(label)
 
     # Жёстко задаём 1000.0 как дефолт
-    value = 1000.0
-    dialog.setDoubleValue(value)
+
+    dialog.setDoubleValue(100)
     dialog.setDoubleRange(min_val, max_val)
-    dialog.setDoubleDecimals(2)
+    dialog.setDoubleDecimals(6)
 
     # Убираем кнопку справки (иконку «?»)
     dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
@@ -354,8 +295,6 @@ def getStyledDouble(parent, title, label, min_val=0.1, max_val=100000.0):
     result = dialog.exec_()
     if result == QDialog.Accepted:
         return dialog.doubleValue(), True
-    else:
-        return value, False
 
 
 # ----- Виджет Raw Data с QTableView и белым шрифтом -----
@@ -384,35 +323,289 @@ class RawDataWidget(QWidget):
         self.model.update(data)
 
 
+def calculate_x_axis(signal):
+    if len(signal) == 0:
+        return []
+    lambda_start = 1410e-9
+    lambda_end = 1490e-9
+    wavelengths = np.linspace(lambda_start, lambda_end, len(signal))
+    frequencies = 3e8 / wavelengths  # Гц
+    return frequencies / 1e12  # Терагерцы
+
+
+def get_export_settings(parent, title="Export Settings", default_name="plot"):
+    """Возвращает (folder, base_name) или None если отменено"""
+    # 1. Выбор папки
+    folder = QFileDialog.getExistingDirectory(parent, "Select Folder")
+    if not folder:
+        return None
+
+    name_dialog = FileNameDialog(parent, default_name)
+    name_dialog.setWindowTitle(title)
+    if name_dialog.exec_() != QDialog.Accepted:
+        return None
+
+    return (folder, name_dialog.name_edit.text().strip())
+
+
+class FileNameDialog(QDialog):
+    def __init__(self, parent=None, default_name=""):
+        super().__init__(parent)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setWindowTitle("Enter File Name")
+
+        # Стиль идентичный ExportTypeDialog (без спецстиля для OK)
+        self.setStyleSheet(
+            """
+            QDialog {
+                background-color: #2E2E2E;
+                border: 1px solid #444;
+                border-radius: 5px;
+            }
+            QLabel {
+                color: #DDD;
+                font-size: 12pt;
+                padding: 5px;
+            }
+            QLineEdit {
+                background-color: #353535;
+                color: #FFF;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 8px;
+                selection-background-color: #00B4FF;
+                font-size: 11pt;
+                min-width: 200px;
+            }
+            QPushButton {
+                background-color: #505050;
+                color: #FFF;
+                border: 1px solid #606060;
+                border-radius: 3px;
+                padding: 6px 12px;
+                min-width: 80px;
+                font-size: 11pt;
+            }
+            QPushButton:hover {
+                background-color: #606060;
+            }
+            QPushButton:pressed {
+                background-color: #404040;
+            }
+        """
+        )
+
+        # Основной layout
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(15)
+
+        # Заголовок
+        title_label = QLabel("Enter file name:")
+        title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title_label)
+
+        # Поле ввода
+        self.name_edit = QLineEdit(default_name)
+        self.name_edit.setPlaceholderText("my_plot")
+        layout.addWidget(self.name_edit)
+
+        # Кнопки - теперь OK справа как в стандартном диалоге
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, Qt.Horizontal, self)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+        # Эффект тени
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(10)
+        shadow.setColor(QColor(0, 0, 0, 150))
+        shadow.setOffset(3, 3)
+        self.setGraphicsEffect(shadow)
+
+        # Фиксированный размер
+        self.setFixedSize(300, 180)
+        self.name_edit.setFocus()
+
+    def get_file_name(self):
+        return self.name_edit.text().strip() if self.exec_() == QDialog.Accepted else None
+
+
+class ExportTypeDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setWindowTitle("Export Format Selection")
+        self.setWindowIcon(QIcon('icons/export_icon.png'))  # Добавьте иконку
+
+        # Темная тема с тенями и анимацией
+        self.setStyleSheet(
+            """
+            QDialog {
+                background-color: #2E2E2E;
+                border: 1px solid #444;
+                border-radius: 5px;
+            }
+            QLabel {
+                color: #DDD;
+                font-size: 12pt;
+                padding: 5px;
+            }
+            QComboBox {
+                background-color: #353535;
+                color: #FFF;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 5px;
+                min-width: 120px;
+                selection-background-color: #00B4FF;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #353535;
+                color: #FFF;
+                selection-background-color: #00B4FF;
+            }
+            QPushButton {
+                background-color: #505050;
+                color: #FFF;
+                border: 1px solid #606060;
+                border-radius: 3px;
+                padding: 5px 10px;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #606060;
+            }
+            QPushButton:pressed {
+                background-color: #404040;
+            }
+        """
+        )
+
+        # Основной layout
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(15)
+
+        # Текст заголовка
+        title_label = QLabel("Select export format:")
+        title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title_label)
+
+        # Выбор формата
+        self.combo = QComboBox()
+        self.combo.addItems(["Raster (PNG)", "Vector (SVG)"])
+        self.combo.setCurrentIndex(0)
+        layout.addWidget(self.combo)
+
+        # Кнопки
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+        # Эффекты
+        self.setGraphicsEffect(
+            QGraphicsDropShadowEffect(blurRadius=10, color=QColor(0, 0, 0, 150), offset=QPointF(3, 3))
+        )
+
+        # Фиксируем размер
+        self.setFixedSize(300, 180)
+
+
+def master_export(
+    parent,
+    plots_data=None,
+    base_name=None,
+    folder=None,
+    ask_settings=False,
+    default_base_name="plot",
+    dialog_title="Export Plots",
+):
+    """
+    Универсальная функция экспорта графиков
+    :param parent: Родительский виджет
+    :param plots_data: Список словарей с графиками (если None - будет запрошен)
+    :param base_name: Базовое имя файлов
+    :param folder: Папка для сохранения
+    :param ask_settings: Запрашивать ли папку и имя через диалог
+    :param default_base_name: Имя по умолчанию
+    :param dialog_title: Заголовок диалога
+    """
+    # Запрос настроек если требуется
+    if ask_settings or not base_name or not folder:
+        result = get_export_settings(parent, dialog_title, default_base_name)
+        if not result:
+            return False
+        folder, base_name = result
+
+    # Если данные графиков не переданы - запрашиваем у родителя
+    if plots_data is None:
+        if hasattr(parent, 'get_plots_to_export'):
+            plots_data = parent.get_plots_to_export()
+        else:
+            raise ValueError("Plots data not provided and parent has no get_plots_to_export() method")
+
+    # Диалог выбора типа экспорта
+    dialog = ExportTypeDialog(parent)
+    if dialog.exec_() != QDialog.Accepted:
+        return False
+
+    # Остальная логика экспорта
+    export_type = dialog.combo.currentText()
+
+    if export_type == "Raster (PNG)":
+        ext = "png"
+        ExporterClass = exporters.ImageExporter
+        export_params = {'width': 1920}
+    elif export_type == "Vector (SVG)":
+        ext = "svg"
+        ExporterClass = exporters.SVGExporter
+        export_params = {}
+    else:
+        return False
+
+    # Экспорт каждого графика
+    for plot_data in plots_data:
+        try:
+            file_name = os.path.join(folder, f"{base_name} {plot_data['name']}.{ext}")
+            exporter = ExporterClass(plot_data['plot'].plotItem)
+
+            if export_params:
+                for param, value in export_params.items():
+                    exporter.parameters()[param] = value
+
+            exporter.export(file_name)
+        except Exception as e:
+            print(f"Error exporting {plot_data['name']}: {str(e)}")
+            return False
+
+    return True
+
+
 # ----- Виджет OriginalSignalWidget -----
 class OriginalSignalWidget(QWidget):
-    def __init__(self, signal, sampling_rate, parent=None):
+    def __init__(self, signal, parent=None):
         super().__init__(parent)
         self.signal = signal
-        self.sampling_rate = sampling_rate
         self.peakShown = False
         self.peaksCurve = None
         self.init_ui()
+
+    def export_plot(self):
+        success = master_export(
+            parent=self,
+            plots_data=[{"name": "", "plot": self.plot}],
+            ask_settings=True,
+            default_base_name="Original",
+            dialog_title="Export Signal Plot",
+        )
 
     def init_ui(self):
         layout = QVBoxLayout(self)
         self.plot = pg.PlotWidget()
         self.plot.setBackground("#2E2E2E")
 
-        # 1. Расчет частоты из длины волны
-        if len(self.signal) > 0:
-            # Диапазон длин волн (1410-1490 нм)
-            lambda_start = 1410e-9  # метры
-            lambda_end = 1490e-9  # метры
-            wavelengths = np.linspace(lambda_start, lambda_end, len(self.signal))
-
-            # Преобразование в частоту (c = 3e8 м/с)
-            frequencies = 3e8 / wavelengths  # Гц
-            frequencies_THz = frequencies / 1e12  # Терагерцы
-
-            x_axis = frequencies_THz
-        else:
-            x_axis = []
+        x_axis = calculate_x_axis(self.signal)
 
         # 2. Построение графика с новой осью X
         self.curve = self.plot.plot(x_axis, self.signal, pen=pg.mkPen('#00FF00', width=2))
@@ -426,59 +619,52 @@ class OriginalSignalWidget(QWidget):
         toolbar = QWidget()
         toolbar_layout = QHBoxLayout(toolbar)
         btn_zoom = QPushButton("Zoom")
-        btn_find_peaks = QPushButton("Find Peaks")
+        self.btn_peaks = QPushButton("Peaks: Off")
+        toolbar_layout.addWidget(self.btn_peaks)
+        self.btn_peaks.clicked.connect(self.toggle_peaks)
         btn_export = QPushButton("Export Plot")
         toolbar_layout.addWidget(btn_zoom)
-        toolbar_layout.addWidget(btn_find_peaks)
         toolbar_layout.addWidget(btn_export)
         layout.addWidget(toolbar)
-
         btn_zoom.clicked.connect(lambda: self.plot.getViewBox().autoRange())
-        btn_find_peaks.clicked.connect(self.toggle_peaks)
         btn_export.clicked.connect(self.export_plot)
-
         self.setLayout(layout)
 
     def toggle_peaks(self):
-        t = np.arange(len(self.signal)) / self.sampling_rate
+        if len(self.signal) == 0:
+            return
+
+        x_axis = calculate_x_axis(self.signal)
+
         if not self.peakShown:
-            peaks, _ = find_peaks(self.signal, prominence=1)
+            # --- Метод на основе производных ---
+            # 1. Сглаживание сигнала (опционально)
+            smoothed_signal = np.convolve(self.signal, np.ones(5) / 5, mode='same')  # Скользящее среднее
+
+            # 2. Расчет первой производной
+            gradient = np.gradient(smoothed_signal)
+
+            # 3. Поиск точек, где производная меняет знак с + на -
+            peaks = np.where((gradient[:-1] > 0) & (gradient[1:] < 0))[0]
+
+            # 4. Фильтрация слабых пиков (опционально)
+            min_peak_height = 0.5 * np.max(self.signal)
+            peaks = peaks[self.signal[peaks] > min_peak_height]
+
+            # Отображение пиков
             self.peaksCurve = self.plot.plot(
-                t[peaks], self.signal[peaks], pen=None, symbol='x', symbolBrush='r', symbolSize=10
+                x_axis[peaks], self.signal[peaks], pen=None, symbol='x', symbolBrush='r', symbolSize=10
             )
             self.peakShown = True
+            self.btn_peaks.setText("Peaks: On")
         else:
             if self.peaksCurve is not None:
                 self.plot.removeItem(self.peaksCurve)
             self.peakShown = False
-
-    def export_plot(self):
-        dialog = ExportTypeDialog(self)
-        if dialog.exec_() == QDialog.Accepted:
-            export_type = dialog.combo.currentText()
-            if export_type == "Raster (PNG)":
-                file_name, _ = QFileDialog.getSaveFileName(self, "Save Plot", "", "PNG Images (*.png);;All Files (*)")
-                if not file_name:
-                    return
-                import pyqtgraph.exporters as exporters
-
-                exporter = exporters.ImageExporter(self.plot.plotItem)
-                exporter.parameters()['width'] = 1920
-                exporter.export(file_name)
-            elif export_type == "Vector (SVG)":
-                file_name, _ = QFileDialog.getSaveFileName(
-                    self, "Save Plot as SVG", "", "SVG Files (*.svg);;All Files (*)"
-                )
-                if not file_name:
-                    return
-                import pyqtgraph.exporters as exporters
-
-                exporter = exporters.SVGExporter(self.plot.plotItem)
-                exporter.export(file_name)
+            self.btn_peaks.setText("Peaks: Off")
 
 
 # ----- Виджет SpectrumWidget -----
-# ----- Виджет SpectrumWidget с маркером -----
 class SpectrumWidget(QWidget):
     def __init__(self, mained_signal, sampling_rate, zero_padding=0, parent=None):
         super().__init__(parent)
@@ -555,13 +741,22 @@ class SpectrumWidget(QWidget):
         table.hide()
         return table
 
+    def export_plot(self):
+        plots_to_export = [
+            {"name": "original", "plot": self.original_plot},
+            {"name": "spectrum", "plot": self.plot},
+        ]
+        success = master_export(
+            parent=self, plots_data=plots_to_export, ask_settings=True, default_base_name="Data", dialog_title="Export"
+        )
+
     def _create_toolbar(self):
         toolbar = QWidget()
         layout = QHBoxLayout(toolbar)
         layout.setContentsMargins(0, 5, 0, 0)
 
         self.btn_zoom = QPushButton("Zoom")
-        self.btn_pan = QPushButton("Marker")
+        self.btn_marker = QPushButton("Marker")
         self.btn_export = QPushButton("Export")
 
         button_style = """
@@ -576,21 +771,21 @@ class SpectrumWidget(QWidget):
             QPushButton:checked { background-color: #707070; }
         """
 
-        for btn in [self.btn_zoom, self.btn_pan, self.btn_export]:
+        for btn in [self.btn_zoom, self.btn_marker, self.btn_export]:
             btn.setStyleSheet(button_style)
 
-        self.btn_pan.setCheckable(True)
-        self.btn_pan.setToolTip("Toggle measurement marker")
+        self.btn_marker.setCheckable(True)
+        self.btn_marker.setToolTip("Toggle measurement marker")
 
         layout.addStretch(1)
         layout.addWidget(self.btn_zoom)
-        layout.addWidget(self.btn_pan)
+        layout.addWidget(self.btn_marker)
         layout.addWidget(self.btn_export)
         layout.addStretch(1)
 
         self.btn_zoom.clicked.connect(self._reset_zoom)
-        self.btn_pan.clicked.connect(self._toggle_marker_mode)
-        self.btn_export.clicked.connect(self._export_plot)
+        self.btn_marker.clicked.connect(self._toggle_marker_mode)
+        self.btn_export.clicked.connect(self.export_plot)
 
         return toolbar
 
@@ -647,15 +842,21 @@ class SpectrumWidget(QWidget):
             if len(self.mained_signal) == 0:
                 return
 
-            padded_signal = np.pad(self.mained_signal, (0, self.zero_padding), 'constant')
+            # Вычитание среднего значения из сигнала
+            signal_without_dc = self.mained_signal - np.mean(self.mained_signal)
+
+            # Применение zero-padding к обработанному сигналу
+            padded_signal = np.pad(signal_without_dc, (0, self.zero_padding), 'constant')
+
             N = len(padded_signal)
             T = 1.0 / self.sampling_rate
             yf = fft(padded_signal)
             xf = fftfreq(N, T)[: N // 2]
             amplitude = 2.0 / N * np.abs(yf[: N // 2])
 
-            self.xf = xf[1:] if len(xf) > 1 else None
-            self.amplitude = amplitude[1:] if len(amplitude) > 1 else None
+            # Убрано удаление первой гармоники ([1:])
+            self.xf = xf.copy() if len(xf) > 0 else None
+            self.amplitude = amplitude.copy() if len(amplitude) > 0 else None
 
         except Exception as e:
             print(f"Error calculating spectrum: {e}")
@@ -669,7 +870,7 @@ class SpectrumWidget(QWidget):
             self.curve = self.plot.plot(self.xf, self.amplitude, pen=pg.mkPen('#00FFFF', width=2))
 
     def _toggle_marker_mode(self):
-        self.crosshair_enabled = self.btn_pan.isChecked()
+        self.crosshair_enabled = self.btn_marker.isChecked()
         self._update_marker_controls()
 
     def _update_marker_controls(self):
@@ -677,7 +878,7 @@ class SpectrumWidget(QWidget):
         self.vline.setVisible(self.crosshair_enabled)
         self.hline.setVisible(self.crosshair_enabled)
         self.marker_text.setVisible(self.crosshair_enabled)
-        self.btn_pan.setText("Marker: On" if self.crosshair_enabled else "Marker: Off")
+        self.btn_marker.setText("Marker: On" if self.crosshair_enabled else "Marker: Off")
         self.plot.setMouseEnabled(x=True, y=not self.crosshair_enabled)
 
     def _update_crosshair(self):
@@ -715,21 +916,6 @@ class SpectrumWidget(QWidget):
     def _reset_zoom(self):
         self.plot.autoRange()
 
-    def _export_plot(self):
-        dialog = ExportTypeDialog(self)
-        if dialog.exec_() == QDialog.Accepted:
-            export_type = dialog.combo.currentText()
-            file_filter = "PNG (*.png)" if export_type == "Raster (PNG)" else "SVG (*.svg)"
-            file_name, _ = QFileDialog.getSaveFileName(self, "Save Plot", "", file_filter)
-
-            if file_name:
-                if export_type == "Raster (PNG)":
-                    exporter = pg.exporters.ImageExporter(self.plot.plotItem)
-                    exporter.parameters()['width'] = 1920
-                else:
-                    exporter = pg.exporters.SVGExporter(self.plot.plotItem)
-                exporter.export(file_name)
-
     def update_spectrum(self, new_signal, new_sr, original_signal=None):
         self.mained_signal = new_signal
         self.sampling_rate = new_sr
@@ -739,16 +925,8 @@ class SpectrumWidget(QWidget):
         self.original_signal = original_signal
         # Отрисовка оригинального сигнала
         self.original_plot.clear()
-        if self.original_signal is not None and len(self.original_signal) > 0:
-            lambda_start = 1410e-9  # метры
-            lambda_end = 1490e-9  # метры
-            wavelengths = np.linspace(lambda_start, lambda_end, len(self.original_signal))
-
-            frequencies = 3e8 / wavelengths  # Гц
-            frequencies_THz = frequencies / 1e12  # Терагерцы
-
-            x_axis = frequencies_THz
-            self.original_plot.plot(x_axis, self.original_signal, pen=pg.mkPen('#00FF00', width=2))
+        x_axis = calculate_x_axis(self.original_signal)
+        self.original_plot.plot(x_axis, self.original_signal, pen=pg.mkPen('#00FF00', width=2))
 
     def clear(self):
         self.plot.clear()
@@ -759,46 +937,6 @@ class SpectrumWidget(QWidget):
         self.hline.hide()
         self.marker_text.hide()
         self.data_table.hide()
-
-
-class ExportTypeDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Export Type")
-        layout = QVBoxLayout(self)
-
-        self.combo = QComboBox()
-        self.combo.addItems(["Raster (PNG)", "Vector (SVG)"])
-
-        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btn_box.accepted.connect(self.accept)
-        btn_box.rejected.connect(self.reject)
-
-        layout.addWidget(QLabel("Select export format:"))
-        layout.addWidget(self.combo)
-        layout.addWidget(btn_box)
-
-
-class PandasModel(QAbstractTableModel):
-    """Модель данных для отображения DataFrame"""
-
-    def __init__(self, data):
-        super().__init__()
-        self._data = data
-
-    def rowCount(self, parent=None):
-        return self._data.shape[0]
-
-    def columnCount(self, parent=None):
-        return self._data.shape[1]
-
-    def data(self, index, role=Qt.DisplayRole):
-        if role == Qt.DisplayRole:
-            value = self._data.iloc[index.row(), index.column()]
-            return f"{value:.4f}"
-        elif role == Qt.TextAlignmentRole:
-            return Qt.AlignCenter
-        return None
 
     def headerData(self, section, orientation, role):
         if role == Qt.DisplayRole:
@@ -816,6 +954,15 @@ class PhaseWidget(QWidget):
         self.phase = phase
         self.init_ui()
 
+    def export_plot(self):
+        success = master_export(
+            parent=self,
+            plots_data=[{"name": "", "plot": self.plot}],
+            ask_settings=True,
+            default_base_name="Data",
+            dialog_title="Export Signal Plot",
+        )
+
     def init_ui(self):
         layout = QVBoxLayout(self)
         self.plot = pg.PlotWidget()
@@ -830,42 +977,18 @@ class PhaseWidget(QWidget):
         toolbar = QWidget()
         toolbar_layout = QHBoxLayout(toolbar)
         btn_zoom = QPushButton("Zoom")
-        btn_pan = QPushButton("Pan")
+        # btn_pan = QPushButton("Pan")
         btn_export = QPushButton("Export Plot")
         toolbar_layout.addWidget(btn_zoom)
-        toolbar_layout.addWidget(btn_pan)
+        # toolbar_layout.addWidget(btn_pan)
         toolbar_layout.addWidget(btn_export)
         layout.addWidget(toolbar)
 
         btn_zoom.clicked.connect(lambda: self.plot.getViewBox().autoRange())
-        btn_pan.clicked.connect(lambda: self.plot.getViewBox().setMouseMode(pg.ViewBox.PanMode))
+        # btn_pan.clicked.connect(lambda: self.plot.getViewBox().setMouseMode(pg.ViewBox.PanMode))
         btn_export.clicked.connect(self.export_plot)
 
         self.setLayout(layout)
-
-    def export_plot(self):
-        dialog = ExportTypeDialog(self)
-        if dialog.exec_() == QDialog.Accepted:
-            export_type = dialog.combo.currentText()
-            if export_type == "Raster (PNG)":
-                file_name, _ = QFileDialog.getSaveFileName(self, "Save Plot", "", "PNG Images (*.png);;All Files (*)")
-                if not file_name:
-                    return
-                import pyqtgraph.exporters as exporters
-
-                exporter = exporters.ImageExporter(self.plot.plotItem)
-                exporter.parameters()['width'] = 1920
-                exporter.export(file_name)
-            elif export_type == "Vector (SVG)":
-                file_name, _ = QFileDialog.getSaveFileName(
-                    self, "Save Plot as SVG", "", "SVG Files (*.svg);;All Files (*)"
-                )
-                if not file_name:
-                    return
-                import pyqtgraph.exporters as exporters
-
-                exporter = exporters.SVGExporter(self.plot.plotItem)
-                exporter.export(file_name)
 
 
 # ----- Виджет MainWidget -----
@@ -876,16 +999,6 @@ class MainWidget(QWidget):
         self.sampling_rate = sampling_rate
         self.original_signal = signal.copy()
         self.init_ui()
-        self.lambda_start = 1410e-9  # Выносим параметры в переменные класса
-        self.lambda_end = 1490e-9
-
-    def calculate_x_axis(self, signal):
-        """Рассчитывает частоты (THz) на основе длины волны"""
-        if len(signal) == 0:
-            return []
-        wavelengths = np.linspace(self.lambda_start, self.lambda_end, len(signal))
-        frequencies = 3e8 / wavelengths  # Гц
-        return frequencies / 1e12  # Терагерцы
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -921,7 +1034,7 @@ class MainWidget(QWidget):
 
         self.plot_original = pg.PlotWidget()
         self.plot_original.setBackground("#2E2E2E")
-        x_axis = self.calculate_x_axis(self.signal)
+        x_axis = calculate_x_axis(self.signal)
 
         self.plot_original.plot(x_axis, self.signal, pen=pg.mkPen('#00FF00', width=2))
         self.plot_original.setLabel('left', 'Amplitude', color='white')
@@ -957,16 +1070,16 @@ class MainWidget(QWidget):
         self.main_toolbar = QWidget()
         main_tb_layout = QHBoxLayout(self.main_toolbar)
         self.btn_zoom = QPushButton("Zoom")
-        self.btn_pan = QPushButton("Pan")
+        # self.btn_pan = QPushButton("Pan")
         self.btn_export_plots = QPushButton("Export All Plots")
         main_tb_layout.addWidget(self.btn_zoom)
-        main_tb_layout.addWidget(self.btn_pan)
+        # main_tb_layout.addWidget(self.btn_pan)
         main_tb_layout.addWidget(self.btn_export_plots)
         layout.addWidget(self.main_toolbar)
 
         self.btn_zoom.clicked.connect(self.reset_zoom)
-        self.btn_pan.clicked.connect(lambda: self.plot_spectrum.getViewBox().setMouseMode(1))
-        self.btn_export_plots.clicked.connect(self.export_all_plots)
+        # self.btn_pan.clicked.connect(lambda: self.plot_spectrum.getViewBox().setMouseMode(1))
+        self.btn_export_plots.clicked.connect(self.export_plot)
 
         self.setLayout(layout)
         self.update_spectrum()
@@ -982,7 +1095,7 @@ class MainWidget(QWidget):
             return
 
         # Добавляем нули
-        padded_signal = np.pad(self.original_signal, (0, n_zeros), 'constant')
+        padded_signal = np.pad(self.original_signal, (n_zeros, 0), 'constant')
         self.signal = padded_signal.copy()
         self.time = np.arange(len(self.signal)) / self.sampling_rate
 
@@ -990,7 +1103,7 @@ class MainWidget(QWidget):
         self.plot_original.clear()
         # Расчет частоты из длины волн (1410-1490 нм)
         self.plot_original.clear()
-        x_axis = self.calculate_x_axis(self.signal)
+        x_axis = calculate_x_axis(self.signal)
         self.plot_original.plot(x_axis, self.signal, pen=pg.mkPen('#00FF00', width=2))
 
         analytic_signal = hilbert(padded_signal)
@@ -1009,36 +1122,26 @@ class MainWidget(QWidget):
         self.plot_spectrum.clear()
         self.plot_spectrum.plot(xf, amplitude, pen=pg.mkPen('#00FFFF', width=2))
 
-    def export_all_plots(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Folder to Save Plots")
-        if not folder:
-            return
-        base_name, ok = QInputDialog.getText(self, "File Base Name", "Enter base name for plots:")
-        if not ok or not base_name:
-            return
-
-        import pyqtgraph.exporters as exporters
-
-        plots = {"original": self.plot_original, "spectrum": self.plot_spectrum, "phase": self.plot_phase}
-        for key, plot in plots.items():
-            exporter = exporters.ImageExporter(plot.plotItem)
-            exporter.parameters()['width'] = 1920
-            file_name = os.path.join(folder, f"{base_name}_{key}.png")
-            exporter.export(file_name)
-
-        parent = self.window()
-        if parent is not None and hasattr(parent, 'statusBar'):
-            parent.statusBar().showMessage("Plots exported successfully")
+    def export_plot(self):
+        plots_to_export = [
+            {"name": "original", "plot": self.plot_original},
+            {"name": "spectrum", "plot": self.plot_spectrum},
+            {"name": "phase", "plot": self.plot_phase},
+        ]
+        success = master_export(
+            parent=self,
+            plots_data=plots_to_export,
+            ask_settings=True,
+            default_base_name="Data",
+            dialog_title="Export All Plots",
+        )
 
     def open_original_tab(self):
         if self.signal.size == 0:
             self.window().openOriginalSignalTab(np.array([]), self.sampling_rate)
             return
-        freq, ok = getStyledDouble(
-            self, "Sampling Frequency", "Enter sampling frequency (Hz):", min_val=0.1, max_val=100000.0
-        )
-        if ok:
-            self.window().openOriginalSignalTab(self.signal, freq)
+
+        self.window().openOriginalSignalTab(self.signal)
 
     def open_spectrum_tab(self):
         """Открываем диалог ввода частоты дискретизации и вызываем метод главного окна openSpectrumTab(...)"""
@@ -1049,7 +1152,7 @@ class MainWidget(QWidget):
             return
 
         freq, ok = getStyledDouble(
-            self, "Sampling Frequency", "Enter sampling frequency (Hz):", min_val=0.1, max_val=100000.0
+            self, "Sampling Frequency", "Enter sampling frequency (Hz):", min_val=0.00001, max_val=10000
         )
         if ok:
             # Вызываем метод главного окна, передавая mained_signal
@@ -1081,7 +1184,7 @@ class MainWidget(QWidget):
             self.time = np.array([])
 
         self.plot_original.clear()
-        x_axis = self.calculate_x_axis(self.signal)
+        x_axis = calculate_x_axis(self.signal)
         self.plot_original.setLabel('bottom', 'Frequency (THz)', color='white')
 
         self.plot_phase.clear()
@@ -1162,9 +1265,6 @@ class AdvancedInterferometerApp(QMainWindow):
 
         self.init_data_controls()
         self.init_processing_controls()
-        ###################################################################
-        # Метод resizeEvent: оверлей растягивается на всё окно
-        ###################################################################
 
     def closeTab(self, index):
         self.tab_widget.removeTab(index)
@@ -1172,10 +1272,6 @@ class AdvancedInterferometerApp(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.drag_overlay.setGeometry(self.central_widget.rect())
-
-        ###################################################################
-        # Drag & Drop методы
-        ###################################################################
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -1191,32 +1287,25 @@ class AdvancedInterferometerApp(QMainWindow):
         event.ignore()
 
     def dragMoveEvent(self, event):
-        # При перемещении курсора обновляем положение и остаёмся в режиме принятия, если курсор внутри окна
         if self.rect().contains(self.mapFromGlobal(QCursor.pos())):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dragLeaveEvent(self, event):
-        # Скрывать оверлей только если курсор действительно покинул окно
         if not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
             self.drag_overlay.hideOverlay()
         event.accept()
 
     def dropEvent(self, event):
-        # Не скрываем оверлей сразу, а вызываем его скрытие после успешной загрузки файла
         if event.mimeData().hasUrls():
             file_path = event.mimeData().urls()[0].toLocalFile()
             if file_path.lower().endswith(('.txt', '.csv', '.xlsx')):
                 self.open_file(file_path)
-                # После загрузки данных (или даже при ошибке) скрываем оверлей
                 self.drag_overlay.hideOverlay()
                 event.acceptProposedAction()
                 return
         event.ignore()
-        ###################################################################
-        # Инициализация UI-блоков (Data controls, Processing, Analysis)
-        ##################################################################
 
     def init_data_controls(self):
         group = QGroupBox("Data Management")
@@ -1375,12 +1464,12 @@ class AdvancedInterferometerApp(QMainWindow):
         self.tab_widget.addTab(raw_widget, "Raw Data")
         self.tab_widget.setCurrentWidget(raw_widget)
 
-    def openOriginalSignalTab(self, signal, sampling_rate):
+    def openOriginalSignalTab(self, signal):
         for i in range(self.tab_widget.count()):
             if self.tab_widget.tabText(i) == "Original Signal":
                 self.tab_widget.setCurrentIndex(i)
                 return
-        widget = OriginalSignalWidget(signal, sampling_rate)
+        widget = OriginalSignalWidget(signal)
         self.tab_widget.addTab(widget, "Original Signal")
         self.tab_widget.setCurrentWidget(widget)
 
@@ -1424,15 +1513,12 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setFont(QFont("Helvetica", 10))
 
-    # Показываем окно загрузки
     splash = LoadingWindow()
     splash.show()
 
-    # Создаем главное окно в фоне
     window = AdvancedInterferometerApp()
 
-    # Настраиваем таймеры для закрытия splash и показа основного окна
-    QTimer.singleShot(2500, splash.close)
-    QTimer.singleShot(2500, window.show)
+    QTimer.singleShot(800, splash.close)
+    QTimer.singleShot(800, window.show)
 
     sys.exit(app.exec_())
