@@ -40,6 +40,8 @@ from PyQt5.QtWidgets import (
 from scipy.fft import fft, fftfreq
 from scipy.signal import hilbert
 
+from scipy.signal import stft
+
 
 # Добавляем новый класс для загрузочного окна
 class LoadingWindow(QDialog):
@@ -665,295 +667,313 @@ class OriginalSignalWidget(QWidget):
 
 
 # ----- Виджет SpectrumWidget -----
+import numpy as np
+from numpy.fft import fft, fftfreq
+from PyQt5.QtCore  import Qt
+from PyQt5.QtGui   import QStandardItemModel, QStandardItem
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+    QTableView
+)
+import pyqtgraph as pg
+
+# — вспомогательные функции (должны быть в проекте) —
+# master_export(...)
+# calculate_x_axis(...)
+
+
 class SpectrumWidget(QWidget):
+    """
+    Виджет, который:
+      • показывает исходный сигнал;
+      • строит амплитудный спектр;
+      • по маркеру рисует ровно 10 периодов выбранной гармоники
+        синус-волной, заданной 1000 точками (без сглаживания).
+    """
     def __init__(self, mained_signal, sampling_rate, zero_padding=0, parent=None):
         super().__init__(parent)
-        self.mained_signal = mained_signal
-        self.sampling_rate = sampling_rate
-        self.zero_padding = zero_padding
+
+        self.mained_signal   = mained_signal
+        self.sampling_rate   = sampling_rate
+        self.zero_padding    = zero_padding
         self.original_signal = None
-        self.original_plot = None
+        self.phase_window    = None
 
         self.crosshair_enabled = False
-        self.xf = None
-        self.amplitude = None
+        self.xf = self.amplitude = self._yf = None
 
-        self.plot = pg.PlotWidget()
-        self.vline = None
-        self.hline = None
-        self.marker_text = None
-        self.curve = None
-        self.data_table = self._create_small_table()
-        self._init_ui()
-
-    def _init_ui(self):
-        main_layout = QVBoxLayout(self)
-
-        # Отображение оригинального сигнала
+        # ---- плоты ----
         self.original_plot = pg.PlotWidget()
-        self.original_plot.setBackground("#2E2E2E")
-        self.original_plot.setLabel('left', 'Amplitude', color='white')
-        self.original_plot.setLabel('bottom', 'Frequency (Hz)', color='white')
-        self.original_plot.showGrid(x=True, y=True)
-        main_layout.addWidget(self.original_plot)
+        self.plot          = pg.PlotWidget()
 
-        main_layout.setContentsMargins(5, 5, 5, 5)
-
-        # График
-        self.plot.setBackground("#2E2E2E")
-        self.plot.setLabel('left', 'Amplitude', color='white')
-        self.plot.setLabel('bottom', 'Δt (ps)', color='white')
-        self.plot.showGrid(x=True, y=True)
-        main_layout.addWidget(self.plot)
-
-        # Таблица данных
-        main_layout.addWidget(self.data_table)
-
-        # Панель инструментов внизу
-        main_layout.addWidget(self._create_toolbar())
-
+        # ---- UI ----
+        self.data_table_container = self._create_small_table()
+        self._init_ui()
         self._init_crosshair()
+
+        # ---- спектр ----
         self._calculate_spectrum()
         self._create_data_curve()
         self._reset_crosshair_position()
 
-    def _create_small_table(self):
-        table = QTableView()
-        table.setMaximumHeight(60)
-        table.setFixedWidth(300)
-        table.horizontalHeader().setStretchLastSection(True)
-        table.verticalHeader().hide()
-        table.setStyleSheet(
-            """
-            QTableView {
-                background-color: #2E2E2E;
-                color: #FFFFFF;
-                border: none;
-                font-size: 12px;
-            }
-            QHeaderView::section {
-                background-color: #404040;
-                color: #FFFFFF;
-                padding: 2px;
-            }
-        """
-        )
-        table.hide()
-        return table
+    # ---------------------------------------------------------------- UI ----------
 
-    def export_plot(self):
-        plots_to_export = [
-            {"name": "original", "plot": self.original_plot},
-            {"name": "spectrum", "plot": self.plot},
-        ]
-        success = master_export(
-            parent=self, plots_data=plots_to_export, ask_settings=True, default_base_name="Data", dialog_title="Export"
-        )
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+
+        for w in (self.original_plot, self.plot):
+            w.setBackground("#2E2E2E")
+            w.showGrid(x=True, y=True)
+        self.original_plot.setLabel('left', 'Amplitude', color='white')
+        self.original_plot.setLabel('bottom', 'Time (s)', color='white')
+        self.plot.setLabel('left', 'Amplitude', color='white')
+        self.plot.setLabel('bottom', 'Frequency (Hz)', color='white')
+
+        layout.addWidget(self.original_plot)
+        layout.addWidget(self.plot)
+        layout.addWidget(self.data_table_container)
+        layout.addWidget(self._create_toolbar())
+
+    def _create_small_table(self):
+        container = QWidget()
+        l = QHBoxLayout(container)
+        l.setContentsMargins(0, 0, 0, 0)
+
+        tv = QTableView()
+        tv.setMaximumHeight(60)
+        tv.setFixedWidth(300)
+        tv.horizontalHeader().setStretchLastSection(True)
+        tv.verticalHeader().hide()
+        tv.setStyleSheet("""
+            QTableView { background-color: #2E2E2E; color: #FFFFFF; border: none; font-size: 12px; }
+            QHeaderView::section { background-color: #404040; color: #FFFFFF; padding: 2px; }
+        """)
+        tv.hide()
+        self.data_table = tv
+
+        btn = QPushButton("Plot Phase")
+        btn.setFixedSize(80, 30)
+        btn.clicked.connect(self._plot_phase_time)
+
+        l.addWidget(tv)
+        l.addWidget(btn, alignment=Qt.AlignTop)
+        return container
 
     def _create_toolbar(self):
-        toolbar = QWidget()
-        layout = QHBoxLayout(toolbar)
-        layout.setContentsMargins(0, 5, 0, 0)
+        bar  = QWidget()
+        lbar = QHBoxLayout(bar)
+        lbar.setContentsMargins(0, 5, 0, 0)
 
-        self.btn_zoom = QPushButton("Zoom")
+        self.btn_zoom   = QPushButton("Zoom")
         self.btn_marker = QPushButton("Marker")
         self.btn_export = QPushButton("Export")
 
-        button_style = """
-            QPushButton {
-                background-color: #505050;
-                color: white;
-                border: none;
-                padding: 6px 12px;
-                min-width: 80px;
-            }
-            QPushButton:hover { background-color: #606060; }
-            QPushButton:checked { background-color: #707070; }
-        """
-
-        for btn in [self.btn_zoom, self.btn_marker, self.btn_export]:
-            btn.setStyleSheet(button_style)
+        style = (
+            "QPushButton { background-color: #505050; color: white; border: none; padding: 6px 12px; min-width: 80px; }"
+            "QPushButton:hover { background-color: #606060; }"
+            "QPushButton:checked { background-color: #707070; }"
+        )
+        for b in (self.btn_zoom, self.btn_marker, self.btn_export):
+            b.setStyleSheet(style)
 
         self.btn_marker.setCheckable(True)
         self.btn_marker.setToolTip("Toggle measurement marker")
-
-        layout.addStretch(1)
-        layout.addWidget(self.btn_zoom)
-        layout.addWidget(self.btn_marker)
-        layout.addWidget(self.btn_export)
-        layout.addStretch(1)
 
         self.btn_zoom.clicked.connect(self._reset_zoom)
         self.btn_marker.clicked.connect(self._toggle_marker_mode)
         self.btn_export.clicked.connect(self.export_plot)
 
-        return toolbar
+        lbar.addStretch(1)
+        lbar.addWidget(self.btn_zoom)
+        lbar.addWidget(self.btn_marker)
+        lbar.addWidget(self.btn_export)
+        lbar.addStretch(1)
+        return bar
+
+    # ------------------------------------------------------ cross-hair / marker ----
 
     def _init_crosshair(self):
-        line_style = {'color': "#FFA500", 'width': 1, 'style': Qt.DashLine}
+        pen_style = {'color': "#FFA500", 'width': 1, 'style': Qt.DashLine}
+        self.vline = pg.InfiniteLine(angle=90, movable=False,
+                                     pen=pg.mkPen(**pen_style),
+                                     hoverPen=pg.mkPen(color="#FF0000", width=2))
+        self.hline = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen(**pen_style))
+        self.marker_text = pg.TextItem(anchor=(0.5, 0.5),
+                                       fill=(45, 45, 45, 200),
+                                       color='#FFFF00',
+                                       border=pg.mkPen(color='#808080', width=1))
+        for it in (self.vline, self.hline, self.marker_text):
+            it.setVisible(False)
 
-        self.vline = pg.InfiniteLine(
-            angle=90,
-            movable=False,
-            pen=pg.mkPen(**line_style),
-            hoverPen=pg.mkPen(color="#FF0000", width=2),
-            bounds=(0, None),
-        )
-        self.vline.setVisible(False)
-
-        self.hline = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen(**line_style))
-        self.hline.setVisible(False)
-
-        self.marker_text = pg.TextItem(
-            anchor=(0.5, 0.5), fill=(45, 45, 45, 200), color='#FFFF00', border=pg.mkPen(color='#808080', width=1)
-        )
-        self.marker_text.setVisible(False)
         self.marker_text.mouseClickEvent = self._toggle_table
-
         self.plot.addItem(self.vline)
         self.plot.addItem(self.hline)
         self.plot.addItem(self.marker_text)
+
         self.vline.sigPositionChanged.connect(self._update_crosshair)
 
-    def _toggle_table(self, event):
-        self.data_table.setVisible(not self.data_table.isVisible())
-        if self.data_table.isVisible():
+    def _toggle_table(self, _ev):
+        vis = not self.data_table.isVisible()
+        self.data_table.setVisible(vis)
+        if vis:
             self._update_table_data()
 
     def _update_table_data(self):
-        """Обновляет мини‑таблицу под курсором — показывает Δt и амплитуду"""
         model = QStandardItemModel(1, 2)
-        model.setHorizontalHeaderLabels(['Δt (ps)', 'Amplitude'])
+        model.setHorizontalHeaderLabels(['Frequency (Hz)', 'Amplitude'])
 
-        delta_t = self.vline.value()  # текущая задержка
-        idx = np.abs(self.xf - delta_t).argmin()  # ближайший индекс
-        amp = self.amplitude[idx]
-
-        model.setItem(0, 0, QStandardItem(f"{delta_t:.4f}"))
-        model.setItem(0, 1, QStandardItem(f"{amp:.4f}"))
-
-        for col in range(2):
-            model.item(0, col).setTextAlignment(Qt.AlignCenter)
-
+        freq = self.vline.value()
+        idx  = np.abs(self.xf - freq).argmin()
+        model.setItem(0, 0, QStandardItem(f"{self.xf[idx]:.4f}"))
+        model.setItem(0, 1, QStandardItem(f"{self.amplitude[idx]:.4f}"))
+        for c in range(2):
+            model.item(0, c).setTextAlignment(Qt.AlignCenter)
         self.data_table.setModel(model)
         self.data_table.resizeColumnsToContents()
 
-    def _calculate_spectrum(self):
-        """
-        Формируем спектр «амплитуда‑от‑задержки».
-        Δt (пс) = 1 / f  · 1e12
-        Компонента f = 0 Гц исключается, чтобы Δt не зависела от нуля.
-        """
-        try:
-            if len(self.mained_signal) == 0:
-                return
-
-            padded_signal = np.pad(self.mained_signal, (0, self.zero_padding), 'constant')
-            N = len(padded_signal)
-            T = 1.0 / self.sampling_rate
-
-            yf = fft(padded_signal)
-            xf = fftfreq(N, T)[:N // 2]  # частоты, Гц
-            amplitude = 2.0 / N * np.abs(yf[:N // 2])
-
-            # выбрасываем f = 0, пересчитываем в задержку
-            xf = xf[1:]
-            amplitude = amplitude[1:]
-
-            delta_t_ps = 1e12 / xf  # Δt в пикосекундах
-
-            # (если нужно, чтобы Δt росла слева‑направо, раскомментируйте две строки ниже)
-            # delta_t_ps = delta_t_ps[::-1]
-            # amplitude   = amplitude[::-1]
-
-            self.xf = delta_t_ps
-            self.amplitude = amplitude
-
-        except Exception as e:
-            print(f"Error calculating spectrum: {e}")
-            self.xf, self.amplitude = None, None
-
-    def _create_data_curve(self):
-        if self.curve:
-            self.plot.removeItem(self.curve)
-        if self.xf is not None and self.amplitude is not None:
-            self.curve = self.plot.plot(self.xf, self.amplitude, pen=pg.mkPen('#00FFFF', width=2))
-
     def _toggle_marker_mode(self):
         self.crosshair_enabled = self.btn_marker.isChecked()
-        self._update_marker_controls()
-
-    def _update_marker_controls(self):
-        self.vline.setMovable(self.crosshair_enabled)
-        self.vline.setVisible(self.crosshair_enabled)
-        self.hline.setVisible(self.crosshair_enabled)
-        self.marker_text.setVisible(self.crosshair_enabled)
+        for it in (self.vline, self.hline, self.marker_text):
+            it.setVisible(self.crosshair_enabled)
+            if isinstance(it, pg.InfiniteLine):
+                it.setMovable(self.crosshair_enabled)
+        vis = not self.data_table.isVisible()
+        self.data_table.setVisible(vis)
+        if vis:
+            self._update_table_data()
         self.btn_marker.setText("Marker: On" if self.crosshair_enabled else "Marker: Off")
         self.plot.setMouseEnabled(x=True, y=not self.crosshair_enabled)
 
     def _update_crosshair(self):
-        if self.xf is None or self.amplitude is None:
+        if self.xf is None:
             return
+        freq = self.vline.value()
+        idx  = np.abs(self.xf - freq).argmin()
+        xf, amp = self.xf[idx], self.amplitude[idx]
 
-        x_val = self.vline.value()
-        idx = np.abs(self.xf - x_val).argmin()
-        x_val = self.xf[idx]
-        y_val = self.amplitude[idx]
+        self.vline.setValue(xf)  # притягиваемся точно к бин-частоте
+        self.hline.setValue(amp)
+        self.marker_text.setText(f"Freq: {xf:.2f} Hz\nAmp: {amp:.4f}")
 
-        self.hline.setValue(y_val)
-        self._update_marker_text(x_val, y_val)
-
-    def _update_marker_text(self, x, y):
-        self.marker_text.setText(f"Freq: {x:.2f} Hz\nAmp: {y:.4f}", color='#FFFF00')
-        x_pos = x + (self.xf[-1] - self.xf[0]) * 0.02
-        y_pos = self.amplitude.max() * 0.95
-
+        # аккуратное позиционирование подписи
+        x_shift = (self.xf[-1] - self.xf[0]) * 0.02
+        x_pos   = xf + x_shift
+        y_pos   = self.amplitude.max() * 0.95
         if x_pos > self.xf[-1] * 0.98:
-            x_pos = x - (self.xf[-1] - self.xf[0]) * 0.1
+            x_pos -= 5 * x_shift
             self.marker_text.setAnchor((1, 0.5))
         else:
             self.marker_text.setAnchor((0, 0.5))
-
         self.marker_text.setPos(x_pos, y_pos)
+
         if self.data_table.isVisible():
             self._update_table_data()
 
+    # ----------------------------------------------------------- spectrum calc ----
+
+    def _calculate_spectrum(self):
+        if len(self.mained_signal) == 0:
+            return
+
+        sig = self.mained_signal - np.mean(self.mained_signal)
+        sig = np.pad(sig, (0, self.zero_padding), 'constant')
+
+        N = len(sig)
+        T = 1.0 / self.sampling_rate
+
+        yf = fft(sig)
+        self.xf = fftfreq(N, T)[:N // 2]
+        self._yf = yf[:N // 2]
+        self.amplitude = 2.0 / N * np.abs(self._yf)
+
+    def _create_data_curve(self):
+        if getattr(self, 'curve', None):
+            self.plot.removeItem(self.curve)
+        if self.xf is not None:
+            self.curve = self.plot.plot(self.xf, self.amplitude,
+                                        pen=pg.mkPen('#00FFFF', width=2))
+
+    # ----------------------------------------------------- harmonic sine (10 T) ----
+
+    def _plot_phase_time(self):
+        if self.xf is None:
+            return
+
+        freq = self.vline.value()
+        idx  = np.abs(self.xf - freq).argmin()
+
+        f0  = self.xf[idx]
+        A   = self.amplitude[idx]
+        phi = np.angle(self._yf[idx])
+
+        periods = 10
+        n_pts   = 3000
+        t = np.linspace(0, periods / f0, n_pts, endpoint=False)
+        y = A * np.sin(2 * np.pi * f0 * t + phi)
+
+        if self.phase_window is None:
+            self.phase_window = QWidget()
+            lay = QVBoxLayout(self.phase_window)
+            self.phase_plot = pg.PlotWidget(background="#2E2E2E")
+            self.phase_plot.setAntialiasing(False)  # явный запрет сглаживания
+            lay.addWidget(self.phase_plot)
+
+        self.phase_window.setWindowTitle(f"Phase @ {f0:.2f} Hz")
+        self.phase_plot.clear()
+
+        pen = pg.mkPen('#FF00FF', width=2)
+        self.phase_plot.plot(t, y, pen=pen)
+
+        self.phase_plot.setLabel('left', 'Phase (radians)', color='white')
+        self.phase_plot.setLabel('bottom', 'Time (s)', color='white')
+
+        self.phase_plot.showGrid(x=True, y=True)
+        self.phase_window.show()
+
+    # --------------------------------------------------------- misc helpers -------
+
     def _reset_crosshair_position(self):
-        if self.xf is not None and len(self.xf) > 0:
-            self.vline.setValue(self.xf[len(self.xf) // 2])
+        if self.xf is not None:
+            self.vline.setValue(self.xf[len(self.xf)//2])
             self._update_crosshair()
 
     def _reset_zoom(self):
         self.plot.autoRange()
 
+    def export_plot(self):
+        master_export(
+            parent=self,
+            plots_data=[{"name": "original", "plot": self.original_plot},
+                        {"name": "spectrum", "plot": self.plot}],
+            ask_settings=True,
+            default_base_name="Data",
+            dialog_title="Export"
+        )
+
     def update_spectrum(self, new_signal, new_sr, original_signal=None):
         self.mained_signal = new_signal
         self.sampling_rate = new_sr
+
         self._calculate_spectrum()
         self._create_data_curve()
         self._reset_crosshair_position()
+
         self.original_signal = original_signal
-        # Отрисовка оригинального сигнала
         self.original_plot.clear()
-        x_axis = calculate_x_axis(self.original_signal)
-        self.original_plot.plot(x_axis, self.original_signal, pen=pg.mkPen('#00FF00', width=2))
+        if original_signal is not None:
+            x_axis = calculate_x_axis(original_signal)
+            self.original_plot.plot(x_axis, original_signal,
+                                    pen=pg.mkPen('#00FF00', width=2))
 
     def clear(self):
         self.plot.clear()
-        self.xf = None
-        self.amplitude = None
+        self.xf = self._yf = self.amplitude = None
         self.curve = None
-        self.vline.hide()
-        self.hline.hide()
-        self.marker_text.hide()
-        self.data_table.hide()
+        for it in (self.vline, self.hline, self.marker_text, self.data_table):
+            it.hide()
 
-    def headerData(self, section, orientation, role):
-        if role == Qt.DisplayRole:
-            if orientation == Qt.Horizontal:
-                return self._data.columns[section]
-            return str(section + 1)
-        return None
+
 
 
 # ----- Виджет PhaseWidget -----
@@ -1048,7 +1068,7 @@ class MainWidget(QWidget):
 
         self.plot_original.plot(x_axis, self.signal, pen=pg.mkPen('#00FF00', width=2))
         self.plot_original.setLabel('left', 'Amplitude', color='white')
-        self.plot_original.setLabel('bottom', 'Frequency (THz)', color='white')
+        self.plot_original.setLabel('bottom', 'Frequency (THz)', color='white')  # Исправлено!
         self.plot_original.showGrid(x=True, y=True)
         layout.addWidget(self.plot_original)
 
@@ -1060,21 +1080,18 @@ class MainWidget(QWidget):
         self.plot_spectrum = pg.PlotWidget()
         self.plot_spectrum.setBackground("#2E2E2E")
         self.plot_spectrum.setLabel('left', 'Amplitude', color='white')
-        self.plot_spectrum.setLabel('bottom', 'Δt (ps)', color='white')
+        self.plot_spectrum.setLabel('bottom', 'Frequency (Hz)', color='white')
         self.plot_spectrum.showGrid(x=True, y=True)
         layout.addWidget(self.plot_spectrum)
-        # Phase
-        self.label_phase = ClickableLabel("Phase vs Time")
-        self.label_phase.clicked.connect(self.open_phase_tab)
-        layout.addWidget(self.label_phase)
+
 
         self.plot_phase = pg.PlotWidget()
         self.plot_phase.setBackground("#2E2E2E")
         self.plot_phase.plot(self.time, self.instantaneous_phase, pen=pg.mkPen('#00FFFF', width=2))
         self.plot_phase.setLabel('left', 'Phase (radians)', color='white')
         self.plot_phase.setLabel('bottom', 'Time (s)', color='white')
-        self.plot_phase.showGrid(x=True, y=True)
-        layout.addWidget(self.plot_phase)
+        # self.plot_phase.showGrid(x=True, y=True)
+        # layout.addWidget(self.plot_phase)
 
         # Toolbar
         self.main_toolbar = QWidget()
@@ -1116,25 +1133,22 @@ class MainWidget(QWidget):
         x_axis = calculate_x_axis(self.signal)
         self.plot_original.plot(x_axis, self.signal, pen=pg.mkPen('#00FF00', width=2))
 
-
         analytic_signal = hilbert(padded_signal)
+        self.mained_signal = np.abs(analytic_signal)
         main_signal = np.abs(analytic_signal)
-
         N = len(main_signal)
         T = 1.0 / self.sampling_rate
         yf = fft(main_signal)
         xf = fftfreq(N, T)[: N // 2]
         amplitude = 2.0 / N * np.abs(yf[: N // 2])
 
-        # убираем нуль‑частоту и переводим в Δt
-        xf, amplitude = xf[1:], amplitude[1:]
-        delta_t_ps = 1e12 / xf
-
-        # (при желании разверните ось)
-        # delta_t_ps, amplitude = delta_t_ps[::-1], amplitude[::-1]
+        # remove first harmonic
+        if len(xf) > 1:
+            xf = xf[1:]
+            amplitude = amplitude[1:]
 
         self.plot_spectrum.clear()
-        self.plot_spectrum.plot(delta_t_ps, amplitude, pen=pg.mkPen('#00FFFF', width=2))
+        self.plot_spectrum.plot(xf, amplitude, pen=pg.mkPen('#00FFFF', width=2))
 
     def export_plot(self):
         plots_to_export = [
@@ -1172,10 +1186,7 @@ class MainWidget(QWidget):
             # Вызываем метод главного окна, передавая mained_signal
             main_win.openSpectrumTab(self.mained_signal, freq)
 
-    def open_phase_tab(self):
-        if self.window().switchToExistingTab("Phase vs Time"):
-            return
-        self.window().openPhaseTab(self.time, self.instantaneous_phase)
+
 
     def reset_zoom(self):
         self.plot_original.getViewBox().autoRange()
@@ -1224,6 +1235,7 @@ class CustomTabWidget(QTabWidget):
 class AdvancedInterferometerApp(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setWindowIcon(QIcon("D:/ico.ico"))
         self.setWindowTitle("Multi-Beam Interferometer Analyzer")
         self.setGeometry(100, 50, 1280, 800)
         self.setWindowIcon(QIcon('interferometer_icon.png'))
